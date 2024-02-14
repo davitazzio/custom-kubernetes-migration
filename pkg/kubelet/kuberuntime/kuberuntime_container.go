@@ -283,35 +283,35 @@ func (m *kubeGenericRuntimeManager) startContainer(ctx context.Context, podSandb
 	if strings.Contains(container.Name, "simulation") {
 		// print("SONO ENTRATO QUIIIIII___________________________________________________________")
 
-		done := make(chan bool)
-		go func() {
-			trovato := false
-			for !trovato {
-				files, err := os.ReadDir("/home/cb0/davidetazzioli/dmgmori-simulation/data")
-				if err != nil {
-					print("ERRORE LETTURA DIRECTORY")
-				}
+		// done := make(chan bool)
+		// go func() {
+		// 	trovato := false
+		// 	for !trovato {
+		// 		files, err := os.ReadDir("/home/cb0/davidetazzioli/dmgmori-simulation/data")
+		// 		if err != nil {
+		// 			print("ERRORE LETTURA DIRECTORY")
+		// 		}
 
-				for _, file := range files {
-					if file.Name() == "metric.parquet" {
-						// print("TROVATO\n\n")
+		// 		for _, file := range files {
+		// 			if file.Name() == "metric.parquet" {
+		// 				// print("TROVATO\n\n")
 
-						done <- true
-						trovato = true
-						break
-					}
-				}
+		// 				done <- true
+		// 				trovato = true
+		// 				break
+		// 			}
+		// 		}
 
-			}
+		// 	}
 
-			// pod_simulation := <-m.canale_datavix
-			// print(pod_simulation)
-			// if strings.Contains(pod_simulation, "simulation_ad") {
-			// 	done <- true
+		// 	// pod_simulation := <-m.canale_datavix
+		// 	// print(pod_simulation)
+		// 	// if strings.Contains(pod_simulation, "simulation_ad") {
+		// 	// 	done <- true
 
-			// }
-		}()
-		<-done
+		// 	// }
+		// }()
+		// <-done
 		times_collector.Unlock = time.Now()
 	}
 
