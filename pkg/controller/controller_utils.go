@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"math"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -52,6 +53,7 @@ import (
 	hashutil "k8s.io/kubernetes/pkg/util/hash"
 	taintutils "k8s.io/kubernetes/pkg/util/taints"
 	"k8s.io/utils/clock"
+	"k8s.io/utils/integer"
 
 	"k8s.io/klog/v2"
 )
@@ -471,8 +473,9 @@ type PodControlInterface interface {
 
 // RealPodControl is the default implementation of PodControlInterface.
 type RealPodControl struct {
-	KubeClient clientset.Interface
-	Recorder   record.EventRecorder
+	KubeClient       clientset.Interface
+	Recorder         record.EventRecorder
+	Davidetazziolich string
 }
 
 var _ PodControlInterface = &RealPodControl{}
@@ -596,6 +599,11 @@ func (r RealPodControl) createPods(ctx context.Context, namespace string, pod *v
 	logger.V(4).Info("Controller created pod", "controller", accessor.GetName(), "pod", klog.KObj(newPod))
 	r.Recorder.Eventf(object, v1.EventTypeNormal, SuccessfulCreatePodReason, "Created pod: %v", newPod.Name)
 
+	if strings.Contains(accessor.GetName(), "simulation-client") {
+
+		print("DAVIDEEEE_______________________ HO APPENA CREATO ", accessor.GetName())
+
+	}
 	return nil
 }
 
@@ -604,6 +612,13 @@ func (r RealPodControl) DeletePod(ctx context.Context, namespace string, podID s
 	if err != nil {
 		return fmt.Errorf("object does not have ObjectMeta, %v", err)
 	}
+
+	// if strings.Contains(accessor.GetName(), "simulation-client") {
+
+	// 	r.KubeClient.CoreV1().Pods(namespace).Unlock(ctx, "")
+
+	// }
+
 	logger := klog.FromContext(ctx)
 	logger.V(2).Info("Deleting pod", "controller", accessor.GetName(), "pod", klog.KRef(namespace, podID))
 	if err := r.KubeClient.CoreV1().Pods(namespace).Delete(ctx, podID, metav1.DeleteOptions{}); err != nil {
@@ -690,6 +705,7 @@ func (s ByLogging) Len() int      { return len(s) }
 func (s ByLogging) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
 func (s ByLogging) Less(i, j int) bool {
+	print("CHAIMO LESS DI LOGGINGS")
 	// 1. assigned < unassigned
 	if s[i].Spec.NodeName != s[j].Spec.NodeName && (len(s[i].Spec.NodeName) == 0 || len(s[j].Spec.NodeName) == 0) {
 		return len(s[i].Spec.NodeName) > 0
@@ -730,19 +746,20 @@ func (s ActivePods) Len() int      { return len(s) }
 func (s ActivePods) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
 func (s ActivePods) Less(i, j int) bool {
+	print("CHAIMO LESS DI ACTIVEPOD")
 	// 1. Unassigned < assigned
 	// If only one of the pods is unassigned, the unassigned one is smaller
-	if s[i].Spec.NodeName != s[j].Spec.NodeName && (len(s[i].Spec.NodeName) == 0 || len(s[j].Spec.NodeName) == 0) {
-		return len(s[i].Spec.NodeName) == 0
-	}
+	// if s[i].Spec.NodeName != s[j].Spec.NodeName && (len(s[i].Spec.NodeName) == 0 || len(s[j].Spec.NodeName) == 0) {
+	// 	return len(s[i].Spec.NodeName) == 0
+	// }
 	// 2. PodPending < PodUnknown < PodRunning
 	if podPhaseToOrdinal[s[i].Status.Phase] != podPhaseToOrdinal[s[j].Status.Phase] {
-		return podPhaseToOrdinal[s[i].Status.Phase] < podPhaseToOrdinal[s[j].Status.Phase]
+		return podPhaseToOrdinal[s[i].Status.Phase] > podPhaseToOrdinal[s[j].Status.Phase]
 	}
 	// 3. Not ready < ready
 	// If only one of the pods is not ready, the not ready one is smaller
 	if podutil.IsPodReady(s[i]) != podutil.IsPodReady(s[j]) {
-		return !podutil.IsPodReady(s[i])
+		return !podutil.IsPodReady(s[j])
 	}
 	// TODO: take availability into account when we push minReadySeconds information from deployment into pods,
 	//       see https://github.com/kubernetes/kubernetes/issues/22065
@@ -824,27 +841,36 @@ func (s ActivePodsWithRanks) Swap(i, j int) {
 // Less compares two pods with corresponding ranks and returns true if the first
 // one should be preferred for deletion.
 func (s ActivePodsWithRanks) Less(i, j int) bool {
-	// 1. Unassigned < assigned
-	// If only one of the pods is unassigned, the unassigned one is smaller
-	if s.Pods[i].Spec.NodeName != s.Pods[j].Spec.NodeName && (len(s.Pods[i].Spec.NodeName) == 0 || len(s.Pods[j].Spec.NodeName) == 0) {
-		return len(s.Pods[i].Spec.NodeName) == 0
-	}
-	// 2. PodPending < PodUnknown < PodRunning
-	if podPhaseToOrdinal[s.Pods[i].Status.Phase] != podPhaseToOrdinal[s.Pods[j].Status.Phase] {
-		return podPhaseToOrdinal[s.Pods[i].Status.Phase] < podPhaseToOrdinal[s.Pods[j].Status.Phase]
-	}
-	// 3. Not ready < ready
-	// If only one of the pods is not ready, the not ready one is smaller
-	if podutil.IsPodReady(s.Pods[i]) != podutil.IsPodReady(s.Pods[j]) {
-		return !podutil.IsPodReady(s.Pods[i])
-	}
+	print("CHAIMO LESS DI ACTIVEPOD_WITH_RANKS")
+	// // 1. Unassigned < assigned
+	// // If only one of the pods is unassigned, the unassigned one is smaller
+	// if s.Pods[i].Spec.NodeName != s.Pods[j].Spec.NodeName && (len(s.Pods[i].Spec.NodeName) == 0 || len(s.Pods[j].Spec.NodeName) == 0) {
+	// 	return len(s.Pods[i].Spec.NodeName) == 0
+	// }
+	// // 2. PodPending < PodUnknown < PodRunning
+	// if podPhaseToOrdinal[s.Pods[i].Status.Phase] != podPhaseToOrdinal[s.Pods[j].Status.Phase] {
+	// 	return podPhaseToOrdinal[s.Pods[i].Status.Phase] < podPhaseToOrdinal[s.Pods[j].Status.Phase]
+	// }
+	// // 3. Not ready < ready
+	// // If only one of the pods is not ready, the not ready one is smaller
+	// if podutil.IsPodReady(s.Pods[i]) != podutil.IsPodReady(s.Pods[j]) {
+	// 	return !podutil.IsPodReady(s.Pods[i])
+	// }
 
 	// 4. lower pod-deletion-cost < higher pod-deletion cost
+	// print("USO SOLO POD DELETION COST_____________________________")
 	if utilfeature.DefaultFeatureGate.Enabled(features.PodDeletionCost) {
-		pi, _ := helper.GetDeletionCostFromPodAnnotations(s.Pods[i].Annotations)
-		pj, _ := helper.GetDeletionCostFromPodAnnotations(s.Pods[j].Annotations)
+		print("USO SOLO POD DELETION COST_____________________________")
+		pi, err := helper.GetDeletionCostFromPodAnnotations(s.Pods[i].Annotations)
+		print(err)
+		print("POD DELETION COST DI Pi", pi)
+		pj, err := helper.GetDeletionCostFromPodAnnotations(s.Pods[j].Annotations)
+		print(err)
+		print("POD DELETION COST DI Pj", pj)
 		if pi != pj {
-			return pi < pj
+			result := pi < pj
+			print(result)
+			return result
 		}
 	}
 
@@ -939,7 +965,7 @@ func podReadyTime(pod *v1.Pod) *metav1.Time {
 func maxContainerRestarts(pod *v1.Pod) int {
 	maxRestarts := 0
 	for _, c := range pod.Status.ContainerStatuses {
-		maxRestarts = max(maxRestarts, int(c.RestartCount))
+		maxRestarts = integer.IntMax(maxRestarts, int(c.RestartCount))
 	}
 	return maxRestarts
 }
@@ -951,7 +977,7 @@ func FilterActivePods(logger klog.Logger, pods []*v1.Pod) []*v1.Pod {
 		if IsPodActive(p) {
 			result = append(result, p)
 		} else {
-			logger.V(4).Info("Ignoring inactive pod", "pod", klog.KObj(p), "phase", p.Status.Phase, "deletionTime", klog.SafePtr(p.DeletionTimestamp))
+			logger.V(4).Info("Ignoring inactive pod", "pod", klog.KObj(p), "phase", p.Status.Phase, "deletionTime", p.DeletionTimestamp)
 		}
 	}
 	return result

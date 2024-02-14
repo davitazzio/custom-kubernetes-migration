@@ -350,5 +350,6 @@ func (pc podControlAdapter) DeletePod(ctx context.Context, namespace string, pod
 	if err != nil {
 		return err
 	}
+	print("DAVIDEEEEEE_________________________")
 	return pc.PodControlInterface.DeletePod(ctx, namespace, podID, rc)
 }

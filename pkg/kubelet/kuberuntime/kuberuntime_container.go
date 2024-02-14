@@ -18,6 +18,7 @@ package kuberuntime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -105,6 +106,14 @@ type startSpec struct {
 	ephemeralContainer *v1.EphemeralContainer
 }
 
+type TimesCollector struct {
+	SignalReceived   time.Time
+	ImagePulled      time.Time
+	ContainerCreated time.Time
+	Unlock           time.Time
+	ContainerStarted time.Time
+}
+
 func containerStartSpec(c *v1.Container) *startSpec {
 	return &startSpec{container: c}
 }
@@ -176,6 +185,8 @@ func calcRestartCountByLogDir(path string) (int, error) {
 // * start the container
 // * run the post start lifecycle hooks (if applicable)
 func (m *kubeGenericRuntimeManager) startContainer(ctx context.Context, podSandboxID string, podSandboxConfig *runtimeapi.PodSandboxConfig, spec *startSpec, pod *v1.Pod, podStatus *kubecontainer.PodStatus, pullSecrets []v1.Secret, podIP string, podIPs []string) (string, error) {
+	var times_collector TimesCollector
+	times_collector.SignalReceived = time.Now()
 	container := spec.container
 
 	// Step 1: pull the image.
@@ -202,6 +213,7 @@ func (m *kubeGenericRuntimeManager) startContainer(ctx context.Context, podSandb
 		return msg, err
 	}
 
+	times_collector.ImagePulled = time.Now()
 	// Step 2: create the container.
 	// For a new container, the RestartCount should be 0
 	restartCount := 0
@@ -265,6 +277,44 @@ func (m *kubeGenericRuntimeManager) startContainer(ctx context.Context, podSandb
 	}
 	m.recordContainerEvent(pod, container, containerID, v1.EventTypeNormal, events.CreatedContainer, fmt.Sprintf("Created container %s", container.Name))
 
+	// print("CONTAINER ID CHE STA PER ESSERE AVVIATO", container.Name)
+	times_collector.ContainerCreated = time.Now()
+
+	if strings.Contains(container.Name, "simulation") {
+		// print("SONO ENTRATO QUIIIIII___________________________________________________________")
+
+		done := make(chan bool)
+		go func() {
+			trovato := false
+			for !trovato {
+				files, err := os.ReadDir("/home/cb0/davidetazzioli/dmgmori-simulation/data")
+				if err != nil {
+					print("ERRORE LETTURA DIRECTORY")
+				}
+
+				for _, file := range files {
+					if file.Name() == "metric.parquet" {
+						// print("TROVATO\n\n")
+
+						done <- true
+						trovato = true
+						break
+					}
+				}
+
+			}
+
+			// pod_simulation := <-m.canale_datavix
+			// print(pod_simulation)
+			// if strings.Contains(pod_simulation, "simulation_ad") {
+			// 	done <- true
+
+			// }
+		}()
+		<-done
+		times_collector.Unlock = time.Now()
+	}
+
 	// Step 3: start the container.
 	err = m.runtimeService.StartContainer(ctx, containerID)
 	if err != nil {
@@ -292,27 +342,41 @@ func (m *kubeGenericRuntimeManager) startContainer(ctx context.Context, podSandb
 				"containerID", containerID, "containerLogPath", containerLog)
 		}
 	}
+	times_collector.ContainerStarted = time.Now()
 
 	// Step 4: execute the post start hook.
-	if container.Lifecycle != nil && container.Lifecycle.PostStart != nil {
-		kubeContainerID := kubecontainer.ContainerID{
-			Type: m.runtimeName,
-			ID:   containerID,
-		}
-		msg, handlerErr := m.runner.Run(ctx, kubeContainerID, pod, container, container.Lifecycle.PostStart)
-		if handlerErr != nil {
-			klog.ErrorS(handlerErr, "Failed to execute PostStartHook", "pod", klog.KObj(pod),
-				"podUID", pod.UID, "containerName", container.Name, "containerID", kubeContainerID.String())
-			// do not record the message in the event so that secrets won't leak from the server.
-			m.recordContainerEvent(pod, container, kubeContainerID.ID, v1.EventTypeWarning, events.FailedPostStartHook, "PostStartHook failed")
-			if err := m.killContainer(ctx, pod, kubeContainerID, container.Name, "FailedPostStartHook", reasonFailedPostStartHook, nil, nil); err != nil {
-				klog.ErrorS(err, "Failed to kill container", "pod", klog.KObj(pod),
-					"podUID", pod.UID, "containerName", container.Name, "containerID", kubeContainerID.String())
+	if !(strings.Contains(container.Name, "simulation")) {
+		if container.Lifecycle != nil && container.Lifecycle.PostStart != nil {
+			kubeContainerID := kubecontainer.ContainerID{
+				Type: m.runtimeName,
+				ID:   containerID,
 			}
-			return msg, ErrPostStartHook
+			msg, handlerErr := m.runner.Run(ctx, kubeContainerID, pod, container, container.Lifecycle.PostStart)
+			if handlerErr != nil {
+				klog.ErrorS(handlerErr, "Failed to execute PostStartHook", "pod", klog.KObj(pod),
+					"podUID", pod.UID, "containerName", container.Name, "containerID", kubeContainerID.String())
+				// do not record the message in the event so that secrets won't leak from the server.
+				m.recordContainerEvent(pod, container, kubeContainerID.ID, v1.EventTypeWarning, events.FailedPostStartHook, "PostStartHook failed")
+				if err := m.killContainer(ctx, pod, kubeContainerID, container.Name, "FailedPostStartHook", reasonFailedPostStartHook, nil, nil); err != nil {
+					klog.ErrorS(err, "Failed to kill container", "pod", klog.KObj(pod),
+						"podUID", pod.UID, "containerName", container.Name, "containerID", kubeContainerID.String())
+				}
+				return msg, ErrPostStartHook
+			}
 		}
-	}
+	} else {
+		f, err := os.OpenFile("/test.json", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0755)
+		if err != nil {
+			print("Errore nell'apertura del file")
+		}
+		defer f.Close()
+		byte_file, err := json.MarshalIndent(times_collector, "", " ")
+		if err != nil {
+			print("Errore nella conversione del file in byte")
+		}
+		f.Write(byte_file)
 
+	}
 	return "", nil
 }
 
@@ -735,6 +799,13 @@ func (m *kubeGenericRuntimeManager) killContainer(ctx context.Context, pod *v1.P
 		}
 		pod, containerSpec = restoredPod, restoredContainer
 	}
+
+	// print("CONTAINER ID CHE STA PER ESSERE CANCELLATO_____", containerSpec.Name)
+
+	// if strings.Contains(containerSpec.Name, "simulation_ad") {
+	// 	print("SIMULATION_AD____________ IN KILL_________")
+	// 	m.canale_datavix <- containerID.ID
+	// }
 
 	// From this point, pod and container must be non-nil.
 	gracePeriod := setTerminationGracePeriod(pod, containerSpec, containerName, containerID, reason)
